@@ -73,12 +73,16 @@ def write_rev_to_file(rev_):
 def get_log_filename():
 	return os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'log')
 
+def get_terminal_width():
+	return int(subprocess.check_output(['stty', 'size']).rstrip().split(' ')[1])
+
 def write_virgin_log_file(revinfos_):
+	max_line_width = get_terminal_width()-20
 	filename = get_log_filename()
 	with open(filename, 'w') as fout:
 		for revinfo in revinfos_:
 			for line in revinfo.log_lines:
-				print >> fout, '    %s    ' % line
+				print >> fout, '    %s    ' % line[:max_line_width]
 
 # return line number that was highlighted.   1-based.
 def highlight_rev_in_log_file(rev_):
