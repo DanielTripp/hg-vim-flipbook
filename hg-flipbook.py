@@ -33,9 +33,9 @@ def get_revision_list_from_env():
 
 def create_vim_function_file():
 	contents = r'''
-function! HgFlipbookSwitchRevision(next_or_prev) 
+function! HgFlipbookSwitchRevision(next_or_prev, n) 
 	let $HG_FLIPBOOK_LINENUM = line('.')
-	let output = system($HG_FLIPBOOK_SCRIPT . ' --from-vim ' . a:next_or_prev)
+	let output = system($HG_FLIPBOOK_SCRIPT . ' --from-vim ' . a:next_or_prev . ' ' . a:n)
 	let output_splits = split(output, '|')
 	let new_rev = output_splits[0]
 	let new_filename = output_splits[1]
@@ -50,8 +50,10 @@ function! HgFlipbookSwitchRevision(next_or_prev)
 	call cursor(new_linenum, col('.'))
 endfunction
 
-map <C-p> : call HgFlipbookSwitchRevision('prev')<CR>
-map <C-n> : call HgFlipbookSwitchRevision('next')<CR>
+map <C-k> : call HgFlipbookSwitchRevision('prev', 1)  <CR>
+map <C-j> : call HgFlipbookSwitchRevision('next', 1)  <CR>
+map <C-p> : call HgFlipbookSwitchRevision('prev', 20) <CR>
+map <C-n> : call HgFlipbookSwitchRevision('next', 20) <CR>
 '''
 	filename = os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'vim-functions')
 	with open(filename, 'w') as fout:
@@ -135,19 +137,19 @@ def get_filename_of_rev_creating_if_necessary(rev_):
 		assert filename_according_to_write == filename
 	return filename
 
-def get_upcoming_rev(next_aot_prev_):
+def get_upcoming_rev(next_aot_prev_, n_):
 	cur_rev = os.environ['HG_FLIPBOOK_CUR_REV']
 	revs = get_revision_list_from_env()
-	upcoming_rev_idx = revs.index(cur_rev) + (1 if next_aot_prev_ else -1)
+	upcoming_rev_idx = revs.index(cur_rev) + (n_ if next_aot_prev_ else -n_)
 	upcoming_rev_idx = rein_in(upcoming_rev_idx, 0, len(revs)-1)
 	return revs[upcoming_rev_idx]
 
-def from_vim_main(next_or_prev_):
+def from_vim_main(next_or_prev_, n_):
 	sys.stderr = open(os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'stderr'), 'w')
 	if next_or_prev_ not in ('next', 'prev'):
 		raise Exception("Expected 'next' or 'prev' as a command-line argument.")
 	next_aot_prev = (next_or_prev_ == 'next')
-	upcoming_rev = get_upcoming_rev(next_aot_prev)
+	upcoming_rev = get_upcoming_rev(next_aot_prev, n_)
 	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
 	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
 	upcoming_linenum = get_new_linenum_from_env(upcoming_rev)
@@ -236,8 +238,8 @@ if __name__ == '__main__':
 
 	if len(sys.argv) == 2:
 		top_level_main(sys.argv[1])
-	elif len(sys.argv) == 3 and sys.argv[1] == '--from-vim':
-		from_vim_main(sys.argv[2])
+	elif len(sys.argv) == 4 and sys.argv[1] == '--from-vim':
+		from_vim_main(sys.argv[2], int(sys.argv[3]))
 	else:
 		sys.exit("Don't understand arguments.")
 
