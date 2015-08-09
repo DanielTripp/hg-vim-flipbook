@@ -16,7 +16,7 @@ def put_rev2loglinenum_map_into_env(revinfos_):
 	linenum = 0
 	for revinfo in revinfos_:
 		rev2loglinenum[revinfo.rev] = linenum
-		linenum += len(revinfo.lines_for_gui)
+		linenum += len(revinfo.log_lines)
 	os.environ['HG_FLIPBOOK_REV2LOGLINENUM'] = repr(rev2loglinenum)
 
 def get_rev2loglinenum_from_env():
@@ -40,9 +40,11 @@ function! HgFlipbookSwitchRevision(next_or_prev)
 	let new_rev = output_splits[0]
 	let new_filename = output_splits[1]
 	let new_linenum = output_splits[2]
+	let new_log_linenum = output_splits[3]
 	let $HG_FLIPBOOK_CUR_REV = new_rev
 	1 wincmd w
 	execute 'edit'
+	call cursor(new_log_linenum, col('.'))
 	2 wincmd w
 	execute 'edit' new_filename
 	call cursor(new_linenum, col('.'))
@@ -73,9 +75,10 @@ def write_virgin_log_file(revinfos_):
 	filename = get_log_filename()
 	with open(filename, 'w') as fout:
 		for revinfo in revinfos_:
-			for line in revinfo.lines_for_gui:
+			for line in revinfo.log_lines:
 				print >> fout, '    %s    ' % line
 
+# return line number that was highlighted.   1-based.
 def highlight_rev_in_log_file(rev_):
 	rev2loglinenum = get_rev2loglinenum_from_env()
 	linenum_to_highlight = rev2loglinenum[rev_]
@@ -91,6 +94,7 @@ def highlight_rev_in_log_file(rev_):
 					left_spacer = right_spacer = '   '
 				print >> tmpfile_fout, left_spacer + line[3:-3] + right_spacer
 	shutil.move(temp_filename, log_filename)
+	return linenum_to_highlight + 1
 
 def top_level_main(filename_):
 	delim = '___64576e96-ce85-4778-ab02-496fb264b41f___'
@@ -104,10 +108,10 @@ def top_level_main(filename_):
 			cur_revinfo = RevInfo()
 			revinfos.append(cur_revinfo)
 			cur_revinfo.rev = re.search(r'%(delim)s(\d+)%(delim)s' % {'delim': delim}, line).group(1)
-			cur_revinfo.lines_for_gui = [re.sub(delim, '', line)]
+			cur_revinfo.log_lines = [re.sub(delim, '', line)]
 		else:
 			if cur_revinfo is not None:
-				cur_revinfo.lines_for_gui.append(line)
+				cur_revinfo.log_lines.append(line)
 
 	if not revinfos:
 		sys.exit('Found no revisions.')
@@ -119,9 +123,10 @@ def top_level_main(filename_):
 	init_rev = revinfos[0].rev
 	os.environ['HG_FLIPBOOK_CUR_REV'] = init_rev
 	write_virgin_log_file(revinfos)
-	highlight_rev_in_log_file(init_rev)
-	os.execvp('vim', ['vim', '-c', 'source '+create_vim_function_file(), '-c', 'resize 10', '-c', '2 wincmd w', 
-			'-o', get_log_filename(), write_rev_to_file(init_rev)])
+	highlighted_log_linenum = highlight_rev_in_log_file(init_rev)
+	os.execvp('vim', ['vim', '-c', 'source '+create_vim_function_file(), '-c', 'resize 10', 
+			'-c', 'call cursor(%d,1)' % highlighted_log_linenum, 
+			'-c', '2 wincmd w', '-o', get_log_filename(), write_rev_to_file(init_rev)])
 
 def get_filename_of_rev_creating_if_necessary(rev_):
 	filename = get_rev_filename(rev_)
@@ -144,8 +149,9 @@ def from_vim_main(next_or_prev_):
 	next_aot_prev = (next_or_prev_ == 'next')
 	upcoming_rev = get_upcoming_rev(next_aot_prev)
 	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
-	highlight_rev_in_log_file(upcoming_rev)
-	print '%s|%s|%d' % (upcoming_rev, upcoming_rev_filename, get_new_linenum_from_env(upcoming_rev))
+	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
+	upcoming_linenum = get_new_linenum_from_env(upcoming_rev)
+	print '%s|%s|%d|%d' % (upcoming_rev, upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
 
 class Hunk(object):
 
@@ -160,18 +166,49 @@ class Hunk(object):
 	def __repr__(self):
 		return self.__str__()
 
-def get_diff_hunks(filename_, rev1_, rev2_):
-	args = ['hg', 'diff', '-U', '0', '-r', '%s:%s' % (rev1_, rev2_)]
-	hg_diff_output = subprocess.check_output(args)
+	def tuple(self):
+		return (self.rev1_startline, self.rev2_startline, self.num_lines_added)
+
+def get_hunks_cache_filename(rev1_, rev2_):
+	return os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'hunks-%s-to-%s' % (rev1_, rev2_))
+
+def get_diff_hunks_from_cache(rev1_, rev2_):
+	filename = get_hunks_cache_filename(rev1_, rev2_)
+	try:
+		with open(filename) as fin:
+			hunk_tuples = eval(fin.read())
+		return [Hunk(*hunk_tuple) for hunk_tuple in hunk_tuples]
+	except IOError:
+		return None
+
+def write_hunks_cache_file(hunks_, rev1_, rev2_):
+	filename = get_hunks_cache_filename(rev1_, rev2_)
+	with open(filename, 'w') as fout:
+		fout.write(repr([hunk.tuple() for hunk in hunks_]))
+
+def get_diff_hunks(rev1_, rev2_):
+	r = get_diff_hunks_from_cache(rev1_, rev2_)
+	if r is None:
+		r = get_diff_hunks_from_hg(rev1_, rev2_)
+		write_hunks_cache_file(r, rev1_, rev2_)
+	return r
+
+def get_diff_hunks_from_hg(rev1_, rev2_):
+	filename = os.environ['HG_FLIPBOOK_FILENAME']
+	args = ['hg', 'diff', '-U', '0', '-r', '%s:%s' % (rev1_, rev2_), filename]
+	proc = subprocess.Popen(args, stdout=subprocess.PIPE)
 	r = []
-	for line in hg_diff_output.splitlines():
-		mo = re.match(r'@@ \-(\d+),(\d+) \+(\d+),(\d+) .*@@', line)
+	for line in proc.stdout:
+		mo = re.match(r'^@@ \-(\d+),(\d+) \+(\d+),(\d+) .*@@$', line)
 		if mo:
 			rev1_startline = int(mo.group(1))
 			rev2_startline = int(mo.group(3))
 			num_lines_added = int(mo.group(4)) - int(mo.group(2))
 			if num_lines_added != 0:
 				r.append(Hunk(rev1_startline, rev2_startline, num_lines_added))
+	proc.wait()
+	if proc.returncode != 0:
+		raise Exception('hg returned %d' % proc.returncode)
 	return r
 
 def get_new_linenum(hunks_, orig_linenum_):
@@ -189,11 +226,11 @@ def get_new_linenum(hunks_, orig_linenum_):
 	return orig_linenum_ + offset
 
 def get_new_linenum_from_env(upcoming_rev_):
-	filename = os.environ['HG_FLIPBOOK_FILENAME']
 	orig_linenum = int(os.environ['HG_FLIPBOOK_LINENUM'])
 	rev1 = os.environ['HG_FLIPBOOK_CUR_REV']
-	hunks = get_diff_hunks(filename, rev1, upcoming_rev_)
-	return get_new_linenum(hunks, orig_linenum)
+	hunks = get_diff_hunks(rev1, upcoming_rev_)
+	r = get_new_linenum(hunks, orig_linenum)
+	return r
 
 if __name__ == '__main__':
 
