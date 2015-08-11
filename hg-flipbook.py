@@ -85,7 +85,7 @@ def write_virgin_log_file(revinfos_):
 	with open(filename, 'w') as fout:
 		for revinfo in revinfos_:
 			for line in revinfo.log_lines:
-				print >> fout, '    %s    ' % line[:max_line_width]
+				print >> fout, '    %s' % line[:max_line_width]
 
 # return line number that was highlighted.   1-based.
 def highlight_rev_in_log_file(rev_):
@@ -97,11 +97,8 @@ def highlight_rev_in_log_file(rev_):
 		with open(log_filename) as fin:
 			for linei, line in enumerate(fin):
 				line = line.rstrip('\r\n')
-				if linei == linenum_to_highlight:
-					left_spacer = '-->'; right_spacer = '<--'
-				else:
-					left_spacer = right_spacer = '   '
-				print >> tmpfile_fout, left_spacer + line[3:-3] + right_spacer
+				line_prefix = ('--> ' if linei == linenum_to_highlight else ' '*4)
+				print >> tmpfile_fout, line_prefix + line[4:]
 	shutil.move(temp_filename, log_filename)
 	return linenum_to_highlight + 1
 
