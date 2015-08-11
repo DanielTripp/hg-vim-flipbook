@@ -133,10 +133,11 @@ def top_level_main(filename_):
 	init_rev = revinfos[0].rev
 	write_virgin_log_file(revinfos)
 	highlighted_log_linenum = highlight_rev_in_log_file(init_rev, get_rev2loglinenum_from_env())
-	os.execvp('vim', ['vim', '-c', 'source '+create_vim_function_file(), 
+	subprocess.call(['vim', '-c', 'source '+create_vim_function_file(), 
 			'-c', 'set readonly', '-c', 'resize 10', 
 			'-c', 'call cursor(%d,1)' % highlighted_log_linenum, 
 			'-c', '2 wincmd w', '-c', 'set readonly', '-o', get_log_filename(), write_rev_to_file(init_rev)])
+	shutil.rmtree(os.environ['HG_FLIPBOOK_TMPDIR'])
 
 def get_filename_of_rev_creating_if_necessary(rev_):
 	filename = get_rev_filename(rev_)
@@ -257,7 +258,7 @@ def get_new_linenum(orig_linenum_, cur_rev_, upcoming_rev_):
 if __name__ == '__main__':
 
 	if len(sys.argv) == 2:
-		import subprocess, tempfile # Importing only when necessary.  For performance.
+		import subprocess, tempfile, shutil # Importing only when necessary.  For performance.
 		top_level_main(sys.argv[1])
 	elif len(sys.argv) == 6 and sys.argv[1] == '--from-vim':
 		from_vim_main(int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5]))
