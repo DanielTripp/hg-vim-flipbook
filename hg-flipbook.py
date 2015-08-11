@@ -133,9 +133,10 @@ def top_level_main(filename_):
 	os.environ['HG_FLIPBOOK_CUR_REV'] = init_rev
 	write_virgin_log_file(revinfos)
 	highlighted_log_linenum = highlight_rev_in_log_file(init_rev)
-	os.execvp('vim', ['vim', '-c', 'source '+create_vim_function_file(), '-c', 'resize 10', 
+	os.execvp('vim', ['vim', '-c', 'source '+create_vim_function_file(), 
+			'-c', 'set readonly', '-c', 'resize 10', 
 			'-c', 'call cursor(%d,1)' % highlighted_log_linenum, 
-			'-c', '2 wincmd w', '-o', get_log_filename(), write_rev_to_file(init_rev)])
+			'-c', '2 wincmd w', '-c', 'set readonly', '-o', get_log_filename(), write_rev_to_file(init_rev)])
 
 def get_filename_of_rev_creating_if_necessary(rev_):
 	filename = get_rev_filename(rev_)
