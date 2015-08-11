@@ -11,6 +11,7 @@ def put_revision_info_into_env(revinfos_):
 	put_revision_list_into_env(revinfos_)
 	put_rev2loglinenum_map_into_env(revinfos_)
 
+# Line numbers in here are 0-based. 
 def put_rev2loglinenum_map_into_env(revinfos_):
 	rev2loglinenum = {}
 	linenum = 0
@@ -34,9 +35,11 @@ def get_revision_list_from_env():
 def create_vim_function_file():
 	contents = r'''
 function! HgFlipbookSwitchRevision(next_or_prev, n) 
+	1 wincmd w
+	let log_linenum = line('.')
 	2 wincmd w
 	let target_linenum = line('.')
-	let output = system($HG_FLIPBOOK_SCRIPT . ' --from-vim ' . target_linenum . ' ' . a:next_or_prev . ' ' . a:n)
+	let output = system($HG_FLIPBOOK_SCRIPT . ' --from-vim ' . log_linenum . ' ' . target_linenum . ' ' . a:next_or_prev . ' ' . a:n)
 	let output_splits = split(output, '|')
 	let new_rev = output_splits[0]
 	let new_filename = output_splits[1]
@@ -88,10 +91,9 @@ def write_virgin_log_file(revinfos_):
 			for line in revinfo.log_lines:
 				print >> fout, '    %s' % line[:max_line_width]
 
-# return line number that was highlighted.   1-based.
-def highlight_rev_in_log_file(rev_):
-	rev2loglinenum = get_rev2loglinenum_from_env()
-	linenum_to_highlight = rev2loglinenum[rev_]
+# return line number that was highlighted for rev_.   1-based.
+def highlight_rev_in_log_file(rev_, rev2loglinenum_):
+	linenum_to_highlight = rev2loglinenum_[rev_]
 	log_filename = get_log_filename()
 	temp_fd, temp_filename = tempfile.mkstemp('logfile', dir=os.environ['HG_FLIPBOOK_TMPDIR'])
 	with os.fdopen(temp_fd, 'w') as tmpfile_fout:
@@ -128,9 +130,8 @@ def top_level_main(filename_):
 	os.environ['HG_FLIPBOOK_SCRIPT'] = os.path.abspath(sys.argv[0])
 	os.environ['HG_FLIPBOOK_TMPDIR'] = tempfile.mkdtemp('-hg-flipbook')
 	init_rev = revinfos[0].rev
-	os.environ['HG_FLIPBOOK_CUR_REV'] = init_rev
 	write_virgin_log_file(revinfos)
-	highlighted_log_linenum = highlight_rev_in_log_file(init_rev)
+	highlighted_log_linenum = highlight_rev_in_log_file(init_rev, get_rev2loglinenum_from_env())
 	os.execvp('vim', ['vim', '-c', 'source '+create_vim_function_file(), 
 			'-c', 'set readonly', '-c', 'resize 10', 
 			'-c', 'call cursor(%d,1)' % highlighted_log_linenum, 
@@ -143,22 +144,35 @@ def get_filename_of_rev_creating_if_necessary(rev_):
 		assert filename_according_to_write == filename
 	return filename
 
-def get_upcoming_rev(next_aot_prev_, n_):
-	cur_rev = os.environ['HG_FLIPBOOK_CUR_REV']
+# arg orig_log_linenum_ - 1-based.
+# arg rev2loglinenum_ - values are 0-based.
+def get_cur_rev(orig_log_linenum_, rev2loglinenum_):
 	revs = get_revision_list_from_env()
-	upcoming_rev_idx = revs.index(cur_rev) + (n_ if next_aot_prev_ else -n_)
+	for rev in revs:
+		log_linenum = rev2loglinenum_[rev]
+		if log_linenum > orig_log_linenum_-1:
+			break
+		r = rev
+	return r
+
+def get_upcoming_rev(cur_rev_, rev_offset_, rev2loglinenum_):
+	revs = get_revision_list_from_env()
+	upcoming_rev_idx = revs.index(cur_rev_) + rev_offset_
 	upcoming_rev_idx = rein_in(upcoming_rev_idx, 0, len(revs)-1)
 	return revs[upcoming_rev_idx]
 
-def from_vim_main(orig_target_linenum_, next_or_prev_, n_):
+def from_vim_main(orig_log_linenum_, orig_target_linenum_, next_or_prev_, n_):
 	sys.stderr = open(os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'stderr'), 'w')
 	if next_or_prev_ not in ('next', 'prev'):
 		raise Exception("Expected 'next' or 'prev' as a command-line argument.")
 	next_aot_prev = (next_or_prev_ == 'next')
-	upcoming_rev = get_upcoming_rev(next_aot_prev, n_)
+	rev2loglinenum = get_rev2loglinenum_from_env()
+	cur_rev = get_cur_rev(orig_log_linenum_, rev2loglinenum)
+	rev_offset = n_*(1 if next_aot_prev else -1)
+	upcoming_rev = get_upcoming_rev(cur_rev, rev_offset, rev2loglinenum)
 	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
-	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
-	upcoming_linenum = get_new_linenum_from_env(orig_target_linenum_, upcoming_rev)
+	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev, rev2loglinenum)
+	upcoming_linenum = get_new_linenum(orig_target_linenum_, cur_rev, upcoming_rev)
 	print '%s|%s|%d|%d' % (upcoming_rev, upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
 
 class Hunk(object):
@@ -219,7 +233,7 @@ def get_diff_hunks_from_hg(rev1_, rev2_):
 		raise Exception('hg returned %d' % proc.returncode)
 	return r
 
-def get_new_linenum(hunks_, orig_linenum_):
+def get_new_linenum_via_hunks(hunks_, orig_linenum_):
 	offset = 0
 	for hunk in hunks_:
 		if hunk.rev1_startline > orig_linenum_:
@@ -233,18 +247,17 @@ def get_new_linenum(hunks_, orig_linenum_):
 				offset += hunk.num_lines_added
 	return orig_linenum_ + offset
 
-def get_new_linenum_from_env(orig_linenum_, upcoming_rev_):
-	rev1 = os.environ['HG_FLIPBOOK_CUR_REV']
-	hunks = get_diff_hunks(rev1, upcoming_rev_)
-	r = get_new_linenum(hunks, orig_linenum_)
+def get_new_linenum(orig_linenum_, cur_rev_, upcoming_rev_):
+	hunks = get_diff_hunks(cur_rev_, upcoming_rev_)
+	r = get_new_linenum_via_hunks(hunks, orig_linenum_)
 	return r
 
 if __name__ == '__main__':
 
 	if len(sys.argv) == 2:
 		top_level_main(sys.argv[1])
-	elif len(sys.argv) == 5 and sys.argv[1] == '--from-vim':
-		from_vim_main(int(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
+	elif len(sys.argv) == 6 and sys.argv[1] == '--from-vim':
+		from_vim_main(int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5]))
 	else:
 		sys.exit("Don't understand arguments.")
 
