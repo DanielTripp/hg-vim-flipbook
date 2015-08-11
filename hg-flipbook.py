@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import sys, re, subprocess, time, os, tempfile, shutil
+import sys, re, time, os
 from misc import *
 
 class RevInfo(object):
@@ -68,6 +68,7 @@ def get_rev_filename(rev_):
 	return os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'revision-%s' % rev_)
 
 def write_rev_to_file(rev_):
+	import subprocess # Importing only when necessary.  For performance.
 	filename = get_rev_filename(rev_)
 	with open(filename, 'w') as fout:
 		args = ['hg', 'cat', '-r', rev_, os.environ['HG_FLIPBOOK_FILENAME']]
@@ -95,14 +96,14 @@ def write_virgin_log_file(revinfos_):
 def highlight_rev_in_log_file(rev_, rev2loglinenum_):
 	linenum_to_highlight = rev2loglinenum_[rev_]
 	log_filename = get_log_filename()
-	temp_fd, temp_filename = tempfile.mkstemp('logfile', dir=os.environ['HG_FLIPBOOK_TMPDIR'])
-	with os.fdopen(temp_fd, 'w') as tmpfile_fout:
+	temp_filename = log_filename+'.tmp'
+	with open(temp_filename, 'w') as tmpfile_fout:
 		with open(log_filename) as fin:
 			for linei, line in enumerate(fin):
 				line = line.rstrip('\r\n')
 				line_prefix = ('--> ' if linei == linenum_to_highlight else ' '*4)
 				print >> tmpfile_fout, line_prefix + line[4:]
-	shutil.move(temp_filename, log_filename)
+	os.rename(temp_filename, log_filename)
 	return linenum_to_highlight + 1
 
 def top_level_main(filename_):
@@ -216,6 +217,7 @@ def get_diff_hunks(rev1_, rev2_):
 	return r
 
 def get_diff_hunks_from_hg(rev1_, rev2_):
+	import subprocess # Importing only when necessary.  For performance.
 	filename = os.environ['HG_FLIPBOOK_FILENAME']
 	args = ['hg', 'diff', '-U', '0', '-r', '%s:%s' % (rev1_, rev2_), filename]
 	proc = subprocess.Popen(args, stdout=subprocess.PIPE)
@@ -255,6 +257,7 @@ def get_new_linenum(orig_linenum_, cur_rev_, upcoming_rev_):
 if __name__ == '__main__':
 
 	if len(sys.argv) == 2:
+		import subprocess, tempfile # Importing only when necessary.  For performance.
 		top_level_main(sys.argv[1])
 	elif len(sys.argv) == 6 and sys.argv[1] == '--from-vim':
 		from_vim_main(int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5]))
