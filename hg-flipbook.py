@@ -74,7 +74,10 @@ def get_log_filename():
 	return os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'log')
 
 def get_terminal_width():
-	return int(subprocess.check_output(['stty', 'size']).rstrip().split(' ')[1])
+	try:
+		return int(subprocess.check_output(['stty', 'size']).rstrip().split(' ')[1])
+	except:
+		return 80
 
 def write_virgin_log_file(revinfos_):
 	max_line_width = get_terminal_width()-20
