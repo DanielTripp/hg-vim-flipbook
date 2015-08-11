@@ -34,8 +34,9 @@ def get_revision_list_from_env():
 def create_vim_function_file():
 	contents = r'''
 function! HgFlipbookSwitchRevision(next_or_prev, n) 
-	let $HG_FLIPBOOK_LINENUM = line('.')
-	let output = system($HG_FLIPBOOK_SCRIPT . ' --from-vim ' . a:next_or_prev . ' ' . a:n)
+	2 wincmd w
+	let target_linenum = line('.')
+	let output = system($HG_FLIPBOOK_SCRIPT . ' --from-vim ' . target_linenum . ' ' . a:next_or_prev . ' ' . a:n)
 	let output_splits = split(output, '|')
 	let new_rev = output_splits[0]
 	let new_filename = output_splits[1]
@@ -149,7 +150,7 @@ def get_upcoming_rev(next_aot_prev_, n_):
 	upcoming_rev_idx = rein_in(upcoming_rev_idx, 0, len(revs)-1)
 	return revs[upcoming_rev_idx]
 
-def from_vim_main(next_or_prev_, n_):
+def from_vim_main(orig_target_linenum_, next_or_prev_, n_):
 	sys.stderr = open(os.path.join(os.environ['HG_FLIPBOOK_TMPDIR'], 'stderr'), 'w')
 	if next_or_prev_ not in ('next', 'prev'):
 		raise Exception("Expected 'next' or 'prev' as a command-line argument.")
@@ -157,7 +158,7 @@ def from_vim_main(next_or_prev_, n_):
 	upcoming_rev = get_upcoming_rev(next_aot_prev, n_)
 	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
 	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
-	upcoming_linenum = get_new_linenum_from_env(upcoming_rev)
+	upcoming_linenum = get_new_linenum_from_env(orig_target_linenum_, upcoming_rev)
 	print '%s|%s|%d|%d' % (upcoming_rev, upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
 
 class Hunk(object):
@@ -232,19 +233,18 @@ def get_new_linenum(hunks_, orig_linenum_):
 				offset += hunk.num_lines_added
 	return orig_linenum_ + offset
 
-def get_new_linenum_from_env(upcoming_rev_):
-	orig_linenum = int(os.environ['HG_FLIPBOOK_LINENUM'])
+def get_new_linenum_from_env(orig_linenum_, upcoming_rev_):
 	rev1 = os.environ['HG_FLIPBOOK_CUR_REV']
 	hunks = get_diff_hunks(rev1, upcoming_rev_)
-	r = get_new_linenum(hunks, orig_linenum)
+	r = get_new_linenum(hunks, orig_linenum_)
 	return r
 
 if __name__ == '__main__':
 
 	if len(sys.argv) == 2:
 		top_level_main(sys.argv[1])
-	elif len(sys.argv) == 4 and sys.argv[1] == '--from-vim':
-		from_vim_main(sys.argv[2], int(sys.argv[3]))
+	elif len(sys.argv) == 5 and sys.argv[1] == '--from-vim':
+		from_vim_main(int(sys.argv[2]), sys.argv[3], int(sys.argv[4]))
 	else:
 		sys.exit("Don't understand arguments.")
 
