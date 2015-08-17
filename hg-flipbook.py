@@ -68,10 +68,8 @@ def get_rev_filename(rev_):
 
 def write_rev_to_file(rev_):
 	filename = get_rev_filename(rev_)
-	with open(filename, 'w') as fout:
-		args = ['hg', 'cat', '-r', rev_, g_filename]
-		hg_cat_output = subprocess.check_call(args, stdout=fout)
-		return filename
+	g_hglib_client.cat([g_filename], rev=rev_, output=filename)
+	return filename
 
 def get_log_filename():
 	return os.path.join(g_tmpdir, 'log')
@@ -256,10 +254,9 @@ def get_diff_hunks(rev1_, rev2_):
 	return r
 
 def get_diff_hunks_from_hg(rev1_, rev2_):
-	args = ['hg', 'diff', '-U', '0', '-r', '%s:%s' % (rev1_, rev2_), g_filename]
-	proc = subprocess.Popen(args, stdout=subprocess.PIPE)
+	diff_output = g_hglib_client.diff([g_filename], revs=(rev1_, rev2_), unified=0)
 	r = []
-	for line in proc.stdout:
+	for line in diff_output.splitlines():
 		mo = re.match(r'^@@ \-(\d+),(\d+) \+(\d+),(\d+) .*@@$', line)
 		if mo:
 			rev1_startline = int(mo.group(1))
@@ -267,9 +264,6 @@ def get_diff_hunks_from_hg(rev1_, rev2_):
 			num_lines_added = int(mo.group(4)) - int(mo.group(2))
 			if num_lines_added != 0:
 				r.append(Hunk(rev1_startline, rev2_startline, num_lines_added))
-	proc.wait()
-	if proc.returncode != 0:
-		raise Exception('hg returned %d' % proc.returncode)
 	return r
 
 def get_new_linenum_via_hunks(hunks_, orig_linenum_):
