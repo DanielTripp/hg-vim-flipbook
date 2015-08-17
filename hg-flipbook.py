@@ -1,10 +1,12 @@
 #!/usr/bin/env python
 
-import sys, re, time, os, subprocess, tempfile, shutil, threading
+import sys, re, time, os, subprocess, tempfile, shutil, threading, traceback
 import hglib
 from misc import *
 
-g_filename = g_hglib_client = g_rev2loglinenum = g_revs = g_vim2server_fifo = g_server2vim_fifo = None
+g_filename = g_hglib_client = g_revs = g_vim2server_fifo = g_server2vim_fifo = None
+# Values are 0-based: 
+g_rev2loglinenum = None
 
 class RevInfo(object):
 
@@ -33,18 +35,22 @@ function! HgFlipbookSwitchRevision(next_or_prev, n)
 	2 wincmd w
 	let target_linenum = line('.')
 	let request = log_linenum . '|' . target_linenum . '|' . a:next_or_prev . '|' . a:n
-	writefile([request], $HG_FLIPBOOK_VIM2SERVER_FIFO)
-	let response = readfile(%HG_FLIPBOOK_SERVER2VIM_FIFO)[0]
-	let response_splits = split(response, '|')
-	let new_filename = response_splits[0]
-	let new_linenum = response_splits[1]
-	let new_log_linenum = response_splits[2]
-	1 wincmd w
-	execute 'edit'
-	call cursor(new_log_linenum, col('.'))
-	2 wincmd w
-	execute 'edit' new_filename
-	call cursor(new_linenum, col('.'))
+	call writefile([request], $HG_FLIPBOOK_VIM2SERVER_FIFO)
+	let response = readfile($HG_FLIPBOOK_SERVER2VIM_FIFO)[0]
+	if response == 'error'
+		echo 'Error.'
+	else
+		let response_splits = split(response, '|')
+		let new_filename = response_splits[0]
+		let new_linenum = response_splits[1]
+		let new_log_linenum = response_splits[2]
+		1 wincmd w
+		execute 'edit'
+		call cursor(new_log_linenum, col('.'))
+		2 wincmd w
+		execute 'edit' new_filename
+		call cursor(new_linenum, col('.'))
+	endif
 endfunction
 
 map <C-k> : call HgFlipbookSwitchRevision('prev', 1)  <CR>
@@ -53,22 +59,18 @@ map <C-p> : call HgFlipbookSwitchRevision('prev', 20) <CR>
 map <C-n> : call HgFlipbookSwitchRevision('next', 20) <CR>
 '''
 	filename = os.path.join(g_tmpdir, 'vim-functions')
-	print 'funcfile 1', filename # tdr 
 	with open(filename, 'w') as fout:
 		fout.write(contents)
-		print 'funcfile 2' # tdr 
 		return filename
 
 def get_rev_filename(rev_):
 	return os.path.join(g_tmpdir, 'revision-%s' % rev_)
 
 def write_rev_to_file(rev_):
-	print 'write 1' # tdr 
 	filename = get_rev_filename(rev_)
 	with open(filename, 'w') as fout:
 		args = ['hg', 'cat', '-r', rev_, g_filename]
 		hg_cat_output = subprocess.check_call(args, stdout=fout)
-		print 'write 2' # tdr 
 		return filename
 
 def get_log_filename():
@@ -145,17 +147,33 @@ def init_fifos():
 def start_server_thread():
 	def run():
 		while True:
-			#print os.environ['HG_FLIPBOOK_VIM2SERVER_FIFO'] # tdr 
-			#print os.environ['HG_FLIPBOOK_SERVER2VIM_FIFO'] # tdr 
-			#time.sleep(1); continue # tdr 
 			with open(os.environ['HG_FLIPBOOK_VIM2SERVER_FIFO']) as fin:
 				request = fin.read()
-			response = '%s|%d|%d' % (g_filename, 3, 4)
+			try:
+				response = get_response(request)
+			except:
+				traceback.print_exc(file=sys.stderr)
+				sys.stderr.flush()
+				response = 'error'
 			with open(os.environ['HG_FLIPBOOK_SERVER2VIM_FIFO'], 'w') as fout:
 				fout.write(response)
 	thread = threading.Thread(target=run)
 	thread.daemon = True
 	thread.start()
+
+def get_response(request_):
+	orig_log_linenum, orig_target_linenum, next_or_prev, n = request_.rstrip().split('|')
+	orig_log_linenum = int(orig_log_linenum)
+	orig_target_linenum = int(orig_target_linenum)
+	n = int(n)
+	next_aot_prev = {'next': True, 'prev': False}[next_or_prev]
+	cur_rev = get_cur_rev(orig_log_linenum)
+	rev_offset = n*(1 if next_aot_prev else -1)
+	upcoming_rev = get_upcoming_rev(cur_rev, rev_offset)
+	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
+	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
+	upcoming_linenum = get_new_linenum(orig_target_linenum, cur_rev, upcoming_rev)
+	return '%s|%d|%d' % (upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
 
 def main():
 	revinfos = get_revinfos()
@@ -167,16 +185,13 @@ def main():
 	init_rev = revinfos[0].rev
 	write_virgin_log_file(revinfos)
 	highlighted_log_linenum = highlight_rev_in_log_file(init_rev)
-	print '1' # tdr 
 	start_server_thread()
-	print '2' # tdr 
 	args = ['vim', '-c', 'source '+create_vim_function_file(), 
 			'-c', 'set readonly', '-c', 'resize 10', 
 			'-c', 'call cursor(%d,1)' % highlighted_log_linenum, 
 			'-c', '2 wincmd w', '-c', 'set readonly', '-o', get_log_filename(), write_rev_to_file(init_rev)]
-	print '3' # tdr 
+	sys.stderr = open(os.path.join(g_tmpdir, 'stderr'), 'w')
 	subprocess.call(args)
-	print '4' # tdr 
 	shutil.rmtree(g_tmpdir)
 
 def get_filename_of_rev_creating_if_necessary(rev_):
@@ -187,35 +202,18 @@ def get_filename_of_rev_creating_if_necessary(rev_):
 	return filename
 
 # arg orig_log_linenum_ - 1-based.
-# arg rev2loglinenum_ - values are 0-based.
-def get_cur_rev(orig_log_linenum_, rev2loglinenum_):
-	revs = get_revision_list_from_env()
-	for rev in revs:
-		log_linenum = rev2loglinenum_[rev]
+def get_cur_rev(orig_log_linenum_):
+	for rev in g_revs:
+		log_linenum = g_rev2loglinenum[rev]
 		if log_linenum > orig_log_linenum_-1:
 			break
 		r = rev
 	return r
 
-def get_upcoming_rev(cur_rev_, rev_offset_, rev2loglinenum_):
-	revs = get_revision_list_from_env()
-	upcoming_rev_idx = revs.index(cur_rev_) + rev_offset_
-	upcoming_rev_idx = rein_in(upcoming_rev_idx, 0, len(revs)-1)
-	return revs[upcoming_rev_idx]
-
-def from_vim_main(orig_log_linenum_, orig_target_linenum_, next_or_prev_, n_):
-	sys.stderr = open(os.path.join(g_tmpdir, 'stderr'), 'w')
-	if next_or_prev_ not in ('next', 'prev'):
-		raise Exception("Expected 'next' or 'prev' as a command-line argument.")
-	next_aot_prev = (next_or_prev_ == 'next')
-	rev2loglinenum = get_rev2loglinenum_from_env()
-	cur_rev = get_cur_rev(orig_log_linenum_, rev2loglinenum)
-	rev_offset = n_*(1 if next_aot_prev else -1)
-	upcoming_rev = get_upcoming_rev(cur_rev, rev_offset, rev2loglinenum)
-	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
-	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev, rev2loglinenum)
-	upcoming_linenum = get_new_linenum(orig_target_linenum_, cur_rev, upcoming_rev)
-	print '%s|%s|%d|%d' % (upcoming_rev, upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
+def get_upcoming_rev(cur_rev_, rev_offset_):
+	upcoming_rev_idx = g_revs.index(cur_rev_) + rev_offset_
+	upcoming_rev_idx = rein_in(upcoming_rev_idx, 0, len(g_revs)-1)
+	return g_revs[upcoming_rev_idx]
 
 class Hunk(object):
 
@@ -258,8 +256,7 @@ def get_diff_hunks(rev1_, rev2_):
 	return r
 
 def get_diff_hunks_from_hg(rev1_, rev2_):
-	filename = os.environ['HG_FLIPBOOK_FILENAME']
-	args = ['hg', 'diff', '-U', '0', '-r', '%s:%s' % (rev1_, rev2_), filename]
+	args = ['hg', 'diff', '-U', '0', '-r', '%s:%s' % (rev1_, rev2_), g_filename]
 	proc = subprocess.Popen(args, stdout=subprocess.PIPE)
 	r = []
 	for line in proc.stdout:
