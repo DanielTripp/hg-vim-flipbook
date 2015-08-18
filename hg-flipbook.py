@@ -47,9 +47,11 @@ function! HgFlipbookSwitchRevision(next_or_prev, n)
 		1 wincmd w
 		execute 'edit'
 		call cursor(new_log_linenum, col('.'))
+		execute "normal! zz"
 		2 wincmd w
 		execute 'edit' new_filename
 		call cursor(new_linenum, col('.'))
+		execute "normal! zz"
 	endif
 endfunction
 
