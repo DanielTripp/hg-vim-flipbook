@@ -263,7 +263,20 @@ def get_diff_hunks_from_hg(rev1_, rev2_):
 		if mo:
 			rev1_startline = int(mo.group(1))
 			rev2_startline = int(mo.group(3))
-			num_lines_added = int(mo.group(4)) - int(mo.group(2))
+			rev1_numlines = int(mo.group(2))
+			rev2_numlines = int(mo.group(4))
+			num_lines_added = rev2_numlines - rev1_numlines
+
+			# Thanks https://www.artima.com/weblogs/viewpost.jsp?thread=164293 
+			# "If the chunk size is 0, the first number is one lower than one would 
+			# expect (it is the line number after which the chunk should be inserted 
+			# or deleted; in all other cases it gives the first line number or the 
+			# replaced range of lines)."
+			if rev1_numlines == 0:
+				rev1_startline += 1
+			if rev2_numlines == 0:
+				rev2_startline += 1
+
 			if num_lines_added != 0:
 				r.append(Hunk(rev1_startline, rev2_startline, num_lines_added))
 	return r
