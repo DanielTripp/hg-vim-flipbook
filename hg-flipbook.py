@@ -150,7 +150,9 @@ def start_server_thread():
 			with open(os.environ['HG_FLIPBOOK_VIM2SERVER_FIFO']) as fin:
 				request = fin.read()
 			try:
+				#t0 = time.time() # tdr 
 				response = get_response(request)
+				#printerr('overall: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
 			except:
 				traceback.print_exc(file=sys.stderr)
 				sys.stderr.flush()
@@ -170,9 +172,12 @@ def get_response(request_):
 	cur_rev = get_cur_rev(orig_log_linenum)
 	rev_offset = n*(1 if next_aot_prev else -1)
 	upcoming_rev = get_upcoming_rev(cur_rev, rev_offset)
+	#t0 = time.time() # tdr 
 	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
+	#printerr('file: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
 	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
 	upcoming_linenum = get_new_linenum(orig_target_linenum, cur_rev, upcoming_rev)
+	#printerr('get_new_linenum: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
 	return '%s|%d|%d' % (upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
 
 def main():
@@ -247,6 +252,17 @@ def write_hunks_cache_file(hunks_, rev1_, rev2_):
 	filename = get_hunks_cache_filename(rev1_, rev2_)
 	with open(filename, 'w') as fout:
 		fout.write(repr([hunk.tuple() for hunk in hunks_]))
+
+# Might as well write these.  For performance.
+def write_reverse_hunks_cache_file(hunks_, rev1_, rev2_):
+	reverse_hunks = get_reversed_hunks(hunks_)
+	write_hunks_cache_file(reversed_hunks, rev2_, rev1_)
+
+def get_reversed_hunks(hunks_):
+	return [get_reversed_hunk(hunk) for hunk in hunks_]
+
+def get_reversed_hunk(hunk_):
+	return Hunk(hunk_.rev2_startline, hunk_.rev1_startline, -hunk_.num_lines_added)
 
 def get_diff_hunks(rev1_, rev2_):
 	r = get_diff_hunks_from_cache(rev1_, rev2_)
