@@ -116,12 +116,16 @@ def init_hglib_client():
 	global g_hglib_client
 	g_hglib_client = hglib.open('.')
 
-# TODO: use hglib for this instead. 
 def get_revinfos():
 	delim = '___64576e96-ce85-4778-ab02-496fb264b41f___'
 	args = ['hg', 'log', '--graph', '--template', 
 			'%(delim)s{rev}%(delim)s:{node|short} {date|shortdate} {author|user} {desc|firstline}' % {'delim': delim}, g_filename]
-	hg_log_output = subprocess.check_output(args)
+	try:
+		hg_log_output = subprocess.check_output(args, stderr=subprocess.STDOUT)
+	except subprocess.CalledProcessError:
+		# Older versions of mercurial don't have the "--graph" option.
+		args.remove('--graph')
+		hg_log_output = subprocess.check_output(args, stderr=subprocess.STDOUT)
 	revinfos = []
 	cur_revinfo = None
 	for line in hg_log_output.splitlines():
