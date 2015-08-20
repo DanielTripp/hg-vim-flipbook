@@ -27,6 +27,14 @@ def init_revs(revinfos_):
 	for revinfo in revinfos_:
 		g_revs.append(revinfo.rev)
 
+# Note [1]: "jogging the cursor" here as a work-around for a bug that appeared
+# on vim on a certain machine, where if the user switched many revisions (for
+# example 20) such that the window should have scrolled for the log file when
+# we update the cursor for it, the cursor position was updating ok but the
+# window wasn't scrolling, so after this function exits, the user would still
+# be looking at the old revision in the log window, now un-highlighted.
+# Manually switching to the log buffer after would scroll the window
+# appropriately.
 def create_vim_function_file():
 	contents = r'''
 function! HgFlipbookSwitchRevision(next_or_prev, n) 
@@ -47,7 +55,8 @@ function! HgFlipbookSwitchRevision(next_or_prev, n)
 		1 wincmd w
 		execute 'edit'
 		call cursor(new_log_linenum, col('.'))
-		execute "normal! zz"
+		execute "normal! $^"
+		" ^^ See note [1] 
 		2 wincmd w
 		execute 'edit' new_filename
 		call cursor(new_linenum, col('.'))
