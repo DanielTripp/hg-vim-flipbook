@@ -60,7 +60,6 @@ function! HgFlipbookSwitchRevision(next_or_prev, n)
 		2 wincmd w
 		execute 'edit' new_filename
 		call cursor(new_linenum, col('.'))
-		execute "normal! zz"
 	endif
 endfunction
 
