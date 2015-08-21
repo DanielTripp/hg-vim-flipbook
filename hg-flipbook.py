@@ -1,12 +1,16 @@
 #!/usr/bin/env python
 
 import sys, re, time, os, subprocess, tempfile, shutil, threading, traceback
+import mercurial
+sys.path.append(os.path.dirname(__file__))
 import hglib
 from misc import *
 
 g_filename = g_hglib_client = g_revs = g_vim2server_fifo = g_server2vim_fifo = None
 # Values are 0-based: 
 g_rev2loglinenum = None
+g_standalone_aot_extension = None
+g_extension_ui = None
 
 class RevInfo(object):
 
@@ -139,7 +143,7 @@ def get_revinfos():
 				cur_revinfo.log_lines.append(line)
 
 	if not revinfos:
-		sys.exit('Found no revisions.')
+		exit_with_error('Found no revisions.')
 
 	return revinfos
 
@@ -192,7 +196,31 @@ def get_response(request_):
 	#printerr('get_new_linenum: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
 	return '%s|%d|%d' % (upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
 
-def main():
+def hg_extension_main(ui_, repo_, filename_, **opts_):
+	"""'Flip' through revisions of a file, with the help of the 'vim' editor."""
+	global g_filename, g_standalone_aot_extension, g_extension_ui
+	g_filename = filename_
+	g_standalone_aot_extension = False
+	g_extension_ui = ui_
+	unimain()
+
+def standalone_main():
+	global g_filename, g_standalone_aot_extension
+	g_standalone_aot_extension = True
+	if len(sys.argv) == 2:
+		g_filename = sys.argv[1]
+		unimain()
+	else:
+		sys.exit("Don't understand arguments.")
+
+def exit_with_error(msg_):
+	if g_standalone_aot_extension:
+		sys.exit(msg_)
+	else:
+		g_extension_ui.write_err(msg_+'\n')
+		sys.exit(1)
+
+def unimain():
 	revinfos = get_revinfos()
 	init_rev2loglinenum(revinfos)
 	init_revs(revinfos)
@@ -328,11 +356,17 @@ def get_new_linenum(orig_linenum_, cur_rev_, upcoming_rev_):
 	r = get_new_linenum_via_hunks(hunks, orig_linenum_)
 	return r
 
+cmdtable = {
+    # cmd name        function call
+    'flipbook|fb': (hg_extension_main,
+        # See mercurial/fancyopts.py for all of the command flag options.
+        [],
+        'FILE')
+		}
+
+testedwith = '3.0.1'
+
 if __name__ == '__main__':
 
-	if len(sys.argv) == 2:
-		g_filename = sys.argv[1]
-		main()
-	else:
-		sys.exit("Don't understand arguments.")
+	standalone_main()
 
