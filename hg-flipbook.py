@@ -123,7 +123,7 @@ def init_hglib_client():
 def get_revinfos():
 	delim = '___64576e96-ce85-4778-ab02-496fb264b41f___'
 	args = ['hg', 'log', '--graph', '--template', 
-			'%(delim)s{rev}%(delim)s:{node|short} {date|shortdate} {author|user} {desc|firstline}' % {'delim': delim}, g_filename]
+			'%(delim)s{rev}%(delim)s:{node|short} {date|shortdate} {author|user} {desc|firstline}\n\n' % {'delim': delim}, g_filename]
 	try:
 		hg_log_output = subprocess.check_output(args, stderr=subprocess.STDOUT)
 	except subprocess.CalledProcessError:
