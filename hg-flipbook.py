@@ -194,7 +194,7 @@ def get_response(request_):
 	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
 	upcoming_linenum = get_new_linenum(orig_target_linenum, cur_rev, upcoming_rev)
 	#printerr('get_new_linenum: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
-	return '%s|%d|%d' % (upcoming_rev_filename, upcoming_linenum, highlighted_log_linenum)
+	return '%s|%d|%d' % (escape_filename_for_vim_arg(upcoming_rev_filename), upcoming_linenum, highlighted_log_linenum)
 
 def hg_extension_main(ui_, repo_, filename_, **opts_):
 	"""'Flip' through revisions of a file, with the help of the 'vim' editor."""
@@ -231,13 +231,16 @@ def unimain():
 	write_virgin_log_file(revinfos)
 	highlighted_log_linenum = highlight_rev_in_log_file(init_rev)
 	start_server_thread()
-	args = ['vim', '-c', 'source '+create_vim_function_file(), 
+	args = ['vim', '-c', 'source %s' % escape_filename_for_vim_arg(create_vim_function_file()),  
 			'-c', 'set readonly', '-c', 'resize 10', 
 			'-c', 'call cursor(%d,1)' % highlighted_log_linenum, 
 			'-c', '2 wincmd w', '-c', 'set readonly', '-o', get_log_filename(), write_rev_to_file(init_rev)]
 	sys.stderr = open(os.path.join(g_tmpdir, 'stderr'), 'w')
 	subprocess.call(args)
 	shutil.rmtree(g_tmpdir)
+
+def escape_filename_for_vim_arg(str_):
+	return str_.replace(' ', '\\ ')
 
 def get_filename_of_rev_creating_if_necessary(rev_):
 	filename = get_rev_filename(rev_)
