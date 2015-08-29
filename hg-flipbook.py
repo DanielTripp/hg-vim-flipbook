@@ -72,8 +72,6 @@ endfunction
 
 map <C-k> : call HgFlipbookSwitchRevision('prev', 1)  <CR>
 map <C-j> : call HgFlipbookSwitchRevision('next', 1)  <CR>
-map <C-p> : call HgFlipbookSwitchRevision('prev', 20) <CR>
-map <C-n> : call HgFlipbookSwitchRevision('next', 20) <CR>
 '''
 	filename = os.path.join(g_tmpdir, 'vim-functions')
 	with open(filename, 'w') as fout:
