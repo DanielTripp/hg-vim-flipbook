@@ -61,11 +61,13 @@ function! HgVimFlipbookSwitchRevision(next_or_prev, n)
 		let new_log_linenum = response_splits[2]
 		1 wincmd w
 		execute 'edit'
+		set readonly
 		call cursor(new_log_linenum, col('.'))
 		execute "normal! $^"
 		" ^^ See note [1] 
 		2 wincmd w
 		execute 'edit' new_filename
+		set readonly
 		call cursor(new_linenum, col('.'))
 	endif
 endfunction
