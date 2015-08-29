@@ -298,7 +298,7 @@ def write_hunks_cache_file(hunks_, rev1_, rev2_):
 
 # Might as well write these.  For performance.
 def write_reverse_hunks_cache_file(hunks_, rev1_, rev2_):
-	reverse_hunks = get_reversed_hunks(hunks_)
+	reversed_hunks = get_reversed_hunks(hunks_)
 	write_hunks_cache_file(reversed_hunks, rev2_, rev1_)
 
 def get_reversed_hunks(hunks_):
@@ -312,6 +312,7 @@ def get_diff_hunks(rev1_, rev2_):
 	if r is None:
 		r = get_diff_hunks_from_hg(rev1_, rev2_)
 		write_hunks_cache_file(r, rev1_, rev2_)
+		write_reverse_hunks_cache_file(r, rev1_, rev2_)
 	return r
 
 def get_diff_hunks_from_hg(rev1_, rev2_):
