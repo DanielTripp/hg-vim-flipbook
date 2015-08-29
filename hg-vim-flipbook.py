@@ -44,14 +44,14 @@ def init_revs(revinfos_):
 # appropriately.
 def create_vim_function_file():
 	contents = r'''
-function! HgFlipbookSwitchRevision(next_or_prev, n) 
+function! HgVimFlipbookSwitchRevision(next_or_prev, n) 
 	1 wincmd w
 	let log_linenum = line('.')
 	2 wincmd w
 	let target_linenum = line('.')
 	let request = log_linenum . '|' . target_linenum . '|' . a:next_or_prev . '|' . a:n
-	call writefile([request], $HG_FLIPBOOK_VIM2SERVER_FIFO)
-	let response = readfile($HG_FLIPBOOK_SERVER2VIM_FIFO)[0]
+	call writefile([request], $HG_VIM_FLIPBOOK_VIM2SERVER_FIFO)
+	let response = readfile($HG_VIM_FLIPBOOK_SERVER2VIM_FIFO)[0]
 	if response == 'error'
 		echo 'Error.'
 	elseif response != 'do-nothing'
@@ -70,8 +70,8 @@ function! HgFlipbookSwitchRevision(next_or_prev, n)
 	endif
 endfunction
 
-map <C-k> : call HgFlipbookSwitchRevision('prev', 1)  <CR>
-map <C-j> : call HgFlipbookSwitchRevision('next', 1)  <CR>
+map <C-k> : call HgVimFlipbookSwitchRevision('prev', 1)  <CR>
+map <C-j> : call HgVimFlipbookSwitchRevision('next', 1)  <CR>
 '''
 	filename = os.path.join(g_tmpdir, 'vim-functions')
 	with open(filename, 'w') as fout:
@@ -155,7 +155,7 @@ def get_revinfos():
 
 def init_tmpdir():
 	global g_tmpdir
-	g_tmpdir = tempfile.mkdtemp('-hg-flipbook')
+	g_tmpdir = tempfile.mkdtemp('-hg-vim-flipbook')
 
 def init_fifos():
 	global g_vim2server_fifo, g_server2vim_fifo
@@ -163,8 +163,8 @@ def init_fifos():
 	g_server2vim_fifo = os.path.join(g_tmpdir, 'server2vim')
 	os.mkfifo(g_vim2server_fifo)
 	os.mkfifo(g_server2vim_fifo)
-	os.environ['HG_FLIPBOOK_VIM2SERVER_FIFO'] = g_vim2server_fifo
-	os.environ['HG_FLIPBOOK_SERVER2VIM_FIFO'] = g_server2vim_fifo
+	os.environ['HG_VIM_FLIPBOOK_VIM2SERVER_FIFO'] = g_vim2server_fifo
+	os.environ['HG_VIM_FLIPBOOK_SERVER2VIM_FIFO'] = g_server2vim_fifo
 
 def log(str_):
 	if LOG:
@@ -174,7 +174,7 @@ def log(str_):
 def start_server_thread():
 	def run():
 		while True:
-			with open(os.environ['HG_FLIPBOOK_VIM2SERVER_FIFO']) as fin:
+			with open(os.environ['HG_VIM_FLIPBOOK_VIM2SERVER_FIFO']) as fin:
 				request = fin.read()
 			try:
 				t0 = time.time()
@@ -184,7 +184,7 @@ def start_server_thread():
 				traceback.print_exc(file=sys.stderr)
 				sys.stderr.flush()
 				response = 'error'
-			with open(os.environ['HG_FLIPBOOK_SERVER2VIM_FIFO'], 'w') as fout:
+			with open(os.environ['HG_VIM_FLIPBOOK_SERVER2VIM_FIFO'], 'w') as fout:
 				fout.write(response)
 	thread = threading.Thread(target=run)
 	thread.daemon = True
@@ -381,7 +381,7 @@ def get_new_linenum(orig_linenum_, cur_rev_, upcoming_rev_):
 
 cmdtable = {
     # cmd name        function call
-    'flipbook|fb': (hg_extension_main,
+    'vimflipbook|vfb|fb': (hg_extension_main,
         # See mercurial/fancyopts.py for all of the command flag options.
         [],
         'FILE')
