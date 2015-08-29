@@ -1,12 +1,15 @@
 #!/usr/bin/env python
 
-import sys, re, time, os, subprocess, tempfile, shutil, threading, traceback
+import sys, re, time, os, subprocess, tempfile, shutil, threading, traceback, difflib
 import mercurial
 sys.path.append(os.path.dirname(__file__))
 import hglib
 from misc import *
 
-g_filename = g_hglib_client = g_revs = g_vim2server_fifo = g_server2vim_fifo = None
+LOG = False
+
+g_filename = g_hglib_client = g_revs = g_vim2server_fifo = g_server2vim_fifo = g_mem_cached_rev = g_mem_cached_rev_contents_lines = None
+g_cur_rev = None
 # Values are 0-based: 
 g_rev2loglinenum = None
 g_standalone_aot_extension = None
@@ -51,7 +54,7 @@ function! HgFlipbookSwitchRevision(next_or_prev, n)
 	let response = readfile($HG_FLIPBOOK_SERVER2VIM_FIFO)[0]
 	if response == 'error'
 		echo 'Error.'
-	else
+	elseif response != 'do-nothing'
 		let response_splits = split(response, '|')
 		let new_filename = response_splits[0]
 		let new_linenum = response_splits[1]
@@ -81,8 +84,13 @@ def get_rev_filename(rev_):
 	return os.path.join(g_tmpdir, 'revision-%s' % rev_)
 
 def write_rev_to_file(rev_):
+	global g_mem_cached_rev, g_mem_cached_rev_contents_lines
+	file_contents = g_hglib_client.cat([g_filename], rev=rev_)
 	filename = get_rev_filename(rev_)
-	g_hglib_client.cat([g_filename], rev=rev_, output=filename)
+	with open(filename, 'w') as fout:
+		fout.write(file_contents)
+	g_mem_cached_rev = rev_
+	g_mem_cached_rev_contents_lines = file_contents.splitlines()
 	return filename
 
 def get_log_filename():
@@ -160,15 +168,20 @@ def init_fifos():
 	os.environ['HG_FLIPBOOK_VIM2SERVER_FIFO'] = g_vim2server_fifo
 	os.environ['HG_FLIPBOOK_SERVER2VIM_FIFO'] = g_server2vim_fifo
 
+def log(str_):
+	if LOG:
+		printerr(str_)
+		sys.stderr.flush()
+
 def start_server_thread():
 	def run():
 		while True:
 			with open(os.environ['HG_FLIPBOOK_VIM2SERVER_FIFO']) as fin:
 				request = fin.read()
 			try:
-				#t0 = time.time() # tdr 
+				t0 = time.time()
 				response = get_response(request)
-				#printerr('overall: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
+				log('get_response(): %d ms.' % int((time.time() - t0)*1000))
 			except:
 				traceback.print_exc(file=sys.stderr)
 				sys.stderr.flush()
@@ -180,21 +193,24 @@ def start_server_thread():
 	thread.start()
 
 def get_response(request_):
+	global g_cur_rev
 	orig_log_linenum, orig_target_linenum, next_or_prev, n = request_.rstrip().split('|')
 	orig_log_linenum = int(orig_log_linenum)
 	orig_target_linenum = int(orig_target_linenum)
 	n = int(n)
 	next_aot_prev = {'next': True, 'prev': False}[next_or_prev]
-	cur_rev = get_cur_rev(orig_log_linenum)
+	rev_at_log_cursor = get_rev_at_log_linenum(orig_log_linenum)
 	rev_offset = n*(1 if next_aot_prev else -1)
-	upcoming_rev = get_upcoming_rev(cur_rev, rev_offset)
-	#t0 = time.time() # tdr 
-	upcoming_rev_filename = get_filename_of_rev_creating_if_necessary(upcoming_rev)
-	#printerr('file: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
-	highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
-	upcoming_linenum = get_new_linenum(orig_target_linenum, cur_rev, upcoming_rev)
-	#printerr('get_new_linenum: ', int((time.time() - t0)*1000)); sys.stderr.flush(); t0 = time.time() # tdr 
-	return '%s|%d|%d' % (escape_filename_for_vim_arg(upcoming_rev_filename), upcoming_linenum, highlighted_log_linenum)
+	upcoming_rev = get_upcoming_rev(rev_at_log_cursor, rev_offset)
+	if upcoming_rev == g_cur_rev:
+		return 'do-nothing'
+	else:
+		highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
+		upcoming_linenum = get_new_linenum(orig_target_linenum, g_cur_rev, upcoming_rev)
+		upcoming_rev_filename = get_rev_filename(upcoming_rev)
+		assert os.path.exists(upcoming_rev_filename)
+		g_cur_rev = upcoming_rev
+		return '%s|%d|%d' % (escape_filename_for_vim_arg(upcoming_rev_filename), upcoming_linenum, highlighted_log_linenum)
 
 def hg_extension_main(ui_, repo_, filename_, **opts_):
 	"""'Flip' through revisions of a file, with the help of the 'vim' editor."""
@@ -221,20 +237,21 @@ def exit_with_error(msg_):
 		sys.exit(1)
 
 def unimain():
+	global g_cur_rev
 	revinfos = get_revinfos()
 	init_rev2loglinenum(revinfos)
 	init_revs(revinfos)
 	init_hglib_client()
 	init_tmpdir()
 	init_fifos()
-	init_rev = revinfos[0].rev
+	g_cur_rev = revinfos[0].rev
 	write_virgin_log_file(revinfos)
-	highlighted_log_linenum = highlight_rev_in_log_file(init_rev)
+	highlighted_log_linenum = highlight_rev_in_log_file(g_cur_rev)
 	start_server_thread()
 	args = ['vim', '-c', 'source %s' % escape_filename_for_vim_arg(create_vim_function_file()),  
 			'-c', 'set readonly', '-c', 'resize 10', 
 			'-c', 'call cursor(%d,1)' % highlighted_log_linenum, 
-			'-c', '2 wincmd w', '-c', 'set readonly', '-o', get_log_filename(), write_rev_to_file(init_rev)]
+			'-c', '2 wincmd w', '-c', 'set readonly', '-o', get_log_filename(), write_rev_to_file(g_cur_rev)]
 	sys.stderr = open(os.path.join(g_tmpdir, 'stderr'), 'w')
 	subprocess.call(args)
 	shutil.rmtree(g_tmpdir)
@@ -242,15 +259,8 @@ def unimain():
 def escape_filename_for_vim_arg(str_):
 	return str_.replace(' ', '\\ ')
 
-def get_filename_of_rev_creating_if_necessary(rev_):
-	filename = get_rev_filename(rev_)
-	if not os.path.exists(filename):
-		filename_according_to_write = write_rev_to_file(rev_)
-		assert filename_according_to_write == filename
-	return filename
-
 # arg orig_log_linenum_ - 1-based.
-def get_cur_rev(orig_log_linenum_):
+def get_rev_at_log_linenum(orig_log_linenum_):
 	for rev in g_revs:
 		log_linenum = g_rev2loglinenum[rev]
 		if log_linenum > orig_log_linenum_-1:
@@ -282,7 +292,7 @@ class Hunk(object):
 def get_hunks_cache_filename(rev1_, rev2_):
 	return os.path.join(g_tmpdir, 'hunks-%s-to-%s' % (rev1_, rev2_))
 
-def get_diff_hunks_from_cache(rev1_, rev2_):
+def get_diff_hunks_from_file_cache(rev1_, rev2_):
 	filename = get_hunks_cache_filename(rev1_, rev2_)
 	try:
 		with open(filename) as fin:
@@ -308,7 +318,7 @@ def get_reversed_hunk(hunk_):
 	return Hunk(hunk_.rev2_startline, hunk_.rev1_startline, -hunk_.num_lines_added)
 
 def get_diff_hunks(rev1_, rev2_):
-	r = get_diff_hunks_from_cache(rev1_, rev2_)
+	r = get_diff_hunks_from_file_cache(rev1_, rev2_)
 	if r is None:
 		r = get_diff_hunks_from_hg(rev1_, rev2_)
 		write_hunks_cache_file(r, rev1_, rev2_)
@@ -316,15 +326,24 @@ def get_diff_hunks(rev1_, rev2_):
 	return r
 
 def get_diff_hunks_from_hg(rev1_, rev2_):
-	diff_output = g_hglib_client.diff([g_filename], revs=(rev1_, rev2_), unified=0)
+	global g_mem_cached_rev, g_mem_cached_rev_contents_lines
+	if rev1_ == g_mem_cached_rev:
+		rev1_contents_lines = g_mem_cached_rev_contents_lines
+	else:
+		with open(get_rev_filename(rev1_)) as fin:
+			rev1_contents_lines = fin.readlines()
+	rev2_contents = g_hglib_client.cat([g_filename], rev=rev2_)
+	with open(get_rev_filename(rev2_), 'w') as fout:
+		fout.write(rev2_contents)
+	rev2_contents_lines = rev2_contents.splitlines()
 	r = []
-	for line in diff_output.splitlines():
-		mo = re.match(r'^@@ \-(\d+),(\d+) \+(\d+),(\d+) .*@@$', line)
+	for line in difflib.unified_diff(rev1_contents_lines, rev2_contents_lines, n=0):
+		mo = re.match(r'^@@ \-(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? .*@@$', line)
 		if mo:
 			rev1_startline = int(mo.group(1))
 			rev2_startline = int(mo.group(3))
-			rev1_numlines = int(mo.group(2))
-			rev2_numlines = int(mo.group(4))
+			rev1_numlines = int(mo.group(2) or 1)
+			rev2_numlines = int(mo.group(4) or 1)
 			num_lines_added = rev2_numlines - rev1_numlines
 
 			# Thanks https://www.artima.com/weblogs/viewpost.jsp?thread=164293 
@@ -339,6 +358,8 @@ def get_diff_hunks_from_hg(rev1_, rev2_):
 
 			if num_lines_added != 0:
 				r.append(Hunk(rev1_startline, rev2_startline, num_lines_added))
+	g_mem_cached_rev = rev2_
+	g_mem_cached_rev_contents_lines = rev2_contents_lines
 	return r
 
 def get_new_linenum_via_hunks(hunks_, orig_linenum_):
