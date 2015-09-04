@@ -44,12 +44,19 @@ def init_revs(revinfos_):
 # appropriately.
 def create_vim_function_file():
 	contents = r'''
-function! HgVimFlipbookSwitchRevision(next_or_prev, n) 
+function! HgVimFlipbookSwitchRevision(next_or_prev, repeat_count) 
 	1 wincmd w
 	let log_linenum = line('.')
 	2 wincmd w
 	let target_linenum = line('.')
-	let request = log_linenum . '|' . target_linenum . '|' . a:next_or_prev . '|' . a:n
+
+	" repeat_count will be 0 if this command is invoked without a COUNT argument preceeding it. 
+	" We should move 1 revision in this case. 
+	" repeat_count will be 1 if the command is invokved with a COUNT argument of 1 preceeding it.  
+	" We should move 1 revision in this case too.
+	let n = max([1, a:repeat_count])
+
+	let request = log_linenum . '|' . target_linenum . '|' . a:next_or_prev . '|' . n
 	call writefile([request], $HG_VIM_FLIPBOOK_VIM2SERVER_FIFO)
 	let response = readfile($HG_VIM_FLIPBOOK_SERVER2VIM_FIFO)[0]
 	if response == 'error'
@@ -72,8 +79,11 @@ function! HgVimFlipbookSwitchRevision(next_or_prev, n)
 	endif
 endfunction
 
-map <C-k> : call HgVimFlipbookSwitchRevision('prev', 1)  <CR>
-map <C-j> : call HgVimFlipbookSwitchRevision('next', 1)  <CR>
+" Thanks to http://vim.wikia.com/wiki/Invoke_a_function_with_a_count_prefix 
+command! -nargs=1 HgVimFlipbookSwitchRevisionPrevCmd call HgVimFlipbookSwitchRevision('prev', <args>)
+map <C-k> : <C-U>HgVimFlipbookSwitchRevisionPrevCmd(v:count)<CR>
+command! -nargs=1 HgVimFlipbookSwitchRevisionNextCmd call HgVimFlipbookSwitchRevision('next', <args>)
+map <C-j> : <C-U>HgVimFlipbookSwitchRevisionNextCmd(v:count)<CR>
 '''
 	filename = os.path.join(g_tmpdir, 'vim-functions')
 	with open(filename, 'w') as fout:
