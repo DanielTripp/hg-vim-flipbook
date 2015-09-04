@@ -64,6 +64,21 @@ function! HgVimFlipbookSwitchRevision(next_or_prev, repeat_count)
 	" We should move 1 revision in this case too.
 	let n = max([1, a:repeat_count])
 
+	" This allows the user to switch to the log window and manually move the cursor 
+	" to the line for the desired revision (perhaps by searching for the rev or 
+	" nodeid, or commit comment text) and then (as long as their cursor isn't on the 
+	" first column) when they invoke "next" or "prev" the revision will switch to the 
+	" one for the line they're on - not the next or previous one.  So in this case 
+	" "next" and "prev" act as a "go to THIS revision" function.  Another approach 
+	" would have been to create a new function and key mapping for this 
+	" functionality, but I'd rather keep it simple.
+	" If the user never moves their cursor manually in the log window, then it will 
+	" remain on column 1, and this code won't do anything.
+	1 wincmd w
+	if col('.') != 1
+		let n = n - 1
+	endif
+
 	let request = log_linenum . '|' . target_linenum . '|' . a:next_or_prev . '|' . n
 	call writefile([request], $HG_VIM_FLIPBOOK_VIM2SERVER_FIFO)
 	let response = readfile($HG_VIM_FLIPBOOK_SERVER2VIM_FIFO)[0]
@@ -77,7 +92,7 @@ function! HgVimFlipbookSwitchRevision(next_or_prev, repeat_count)
 		1 wincmd w
 		execute 'edit'
 		set readonly
-		call cursor(new_log_linenum, col('.'))
+		call cursor(new_log_linenum, 1)
 		execute "normal! zz"
 		execute "normal! $^"
 		" ^^ See note [1] 
