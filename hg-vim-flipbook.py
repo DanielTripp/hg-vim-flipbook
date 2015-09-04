@@ -34,7 +34,7 @@ def init_revs(revinfos_):
 	for revinfo in revinfos_:
 		g_revs.append(revinfo.rev)
 
-# Note [1]: "jogging the cursor" here as a work-around for a bug that appeared
+# Note [1]: "jogging the cursor" here w/ ^$ is a work-around for a bug that appeared
 # on vim on a certain machine, where if the user switched many revisions (for
 # example 20) such that the window should have scrolled for the log file when
 # we update the cursor for it, the cursor position was updating ok but the
@@ -42,6 +42,14 @@ def init_revs(revinfos_):
 # be looking at the old revision in the log window, now un-highlighted.
 # Manually switching to the log buffer after would scroll the window
 # appropriately.
+# 
+# (The machine was named 'u', on Cirrus hosting, Ubuntu, vim 7.3.)
+# 
+# Also executing "zz" here because in some cases, pressing Ctrl-J Ctrl-K Ctrl-J 
+# Ctrl-K etc.  would not keep the highlighted line centered visually.  I don't 
+# understand why, but it seems to be at least partly due to log window buffer 
+# height.  (Happened w/ height of 10 on my Ubuntu virtual box (vim 7.3), height 
+# of 20 on the 'u' Cirrus machine, also Ubuntu, vim 7.3.)
 def create_vim_function_file():
 	contents = r'''
 function! HgVimFlipbookSwitchRevision(next_or_prev, repeat_count) 
@@ -70,6 +78,7 @@ function! HgVimFlipbookSwitchRevision(next_or_prev, repeat_count)
 		execute 'edit'
 		set readonly
 		call cursor(new_log_linenum, col('.'))
+		execute "normal! zz"
 		execute "normal! $^"
 		" ^^ See note [1] 
 		2 wincmd w
