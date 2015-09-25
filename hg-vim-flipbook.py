@@ -10,6 +10,7 @@ LOG = False
 
 g_filename = g_hglib_client = g_revs = g_vim2server_fifo = g_server2vim_fifo = g_mem_cached_rev = g_mem_cached_rev_contents_lines = None
 g_cur_rev = None
+g_history_back_revs = []; g_history_forward_revs = []
 # Values are 0-based: 
 g_rev2loglinenum = None
 g_standalone_aot_extension = None
@@ -79,12 +80,36 @@ function! HgVimFlipbookSwitchRevision(next_or_prev, repeat_count)
 		let n = n - 1
 	endif
 
-	let request = log_linenum . '|' . target_linenum . '|' . a:next_or_prev . '|' . n
-	call writefile([request], $HG_VIM_FLIPBOOK_VIM2SERVER_FIFO)
+	let request = 'next-or-prev|' . log_linenum . '|' . target_linenum . '|' . a:next_or_prev . '|' . n
+	call HgVimFlipbookWriteRequestAndReadAndDealWithResponse(request)
+endfunction
+
+" Thanks to http://vim.wikia.com/wiki/Invoke_a_function_with_a_count_prefix 
+command! -nargs=1 HgVimFlipbookSwitchRevisionPrevCmd call HgVimFlipbookSwitchRevision('prev', <args>)
+map <C-k> : <C-U>HgVimFlipbookSwitchRevisionPrevCmd(v:count)<CR>
+command! -nargs=1 HgVimFlipbookSwitchRevisionNextCmd call HgVimFlipbookSwitchRevision('next', <args>)
+map <C-j> : <C-U>HgVimFlipbookSwitchRevisionNextCmd(v:count)<CR>
+
+function! HgVimFlipbookMoveThroughHistory(forward_or_back)
+	2 wincmd w
+	let target_linenum = line('.')
+	let request = 'forward-or-back|' . target_linenum . '|' . a:forward_or_back
+	call HgVimFlipbookWriteRequestAndReadAndDealWithResponse(request)
+endfunction
+
+function! HgVimFlipbookWriteRequestAndReadAndDealWithResponse(request)
+	call writefile([a:request], $HG_VIM_FLIPBOOK_VIM2SERVER_FIFO)
 	let response = readfile($HG_VIM_FLIPBOOK_SERVER2VIM_FIFO)[0]
 	if response == 'error'
 		echo 'Error.'
-	elseif response != 'do-nothing'
+	elseif response == 'do-nothing'
+		2 wincmd w
+		echo 
+		" ^^ Doing this echo because otherwise the name of the command shows up in vim's status line 
+		" eg. ":HgVimFlipbookSwitchRevisionPrevCmd(v:count)" and I think that's useless and ugly. 
+		" We don't have to do this echo if we switch revisions because then we'll be editing a new file, 
+		" and the filename, number of lines, etc. will appear in the status line instead.
+	else
 		let response_splits = split(response, '|')
 		let new_filename = response_splits[0]
 		let new_linenum = response_splits[1]
@@ -103,11 +128,9 @@ function! HgVimFlipbookSwitchRevision(next_or_prev, repeat_count)
 	endif
 endfunction
 
-" Thanks to http://vim.wikia.com/wiki/Invoke_a_function_with_a_count_prefix 
-command! -nargs=1 HgVimFlipbookSwitchRevisionPrevCmd call HgVimFlipbookSwitchRevision('prev', <args>)
-map <C-k> : <C-U>HgVimFlipbookSwitchRevisionPrevCmd(v:count)<CR>
-command! -nargs=1 HgVimFlipbookSwitchRevisionNextCmd call HgVimFlipbookSwitchRevision('next', <args>)
-map <C-j> : <C-U>HgVimFlipbookSwitchRevisionNextCmd(v:count)<CR>
+map <C-h> : <C-U>call HgVimFlipbookMoveThroughHistory('back')<CR>
+map <C-l> : <C-U>call HgVimFlipbookMoveThroughHistory('forward')<CR>
+
 '''
 	filename = os.path.join(g_tmpdir, 'vim-functions')
 	with open(filename, 'w') as fout:
@@ -227,23 +250,53 @@ def start_server_thread():
 	thread.start()
 
 def get_response(request_):
-	global g_cur_rev
-	orig_log_linenum, orig_target_linenum, next_or_prev, n = request_.rstrip().split('|')
+	cmd = request_.split('|', 1)[0]
+	if cmd == 'next-or-prev':
+		return get_response_for_next_or_prev_request(request_)
+	elif cmd == 'forward-or-back':
+		return get_response_for_forward_or_back_request(request_)
+	else:
+		return 'error'
+
+def get_response_for_next_or_prev_request(request_):
+	orig_log_linenum, orig_target_linenum, next_or_prev, n = request_.rstrip().split('|')[1:]
 	orig_log_linenum = int(orig_log_linenum)
 	orig_target_linenum = int(orig_target_linenum)
 	n = int(n)
 	next_aot_prev = {'next': True, 'prev': False}[next_or_prev]
 	rev_at_log_cursor = get_rev_at_log_linenum(orig_log_linenum)
 	rev_offset = n*(1 if next_aot_prev else -1)
+	g_history_forward_revs[:] = []
+	g_history_back_revs.append(g_cur_rev)
 	upcoming_rev = get_upcoming_rev(rev_at_log_cursor, rev_offset)
-	if upcoming_rev == g_cur_rev:
+	return get_response_by_upcoming_rev(upcoming_rev, orig_target_linenum)
+
+def get_response_for_forward_or_back_request(request_):
+	global g_cur_rev
+	orig_target_linenum, forward_or_back = request_.rstrip().split('|')[1:]
+	orig_target_linenum = int(orig_target_linenum)
+	forward_aot_back = {'forward': True, 'back': False}[forward_or_back]
+	upcoming_rev = None
+	if forward_aot_back:
+		if g_history_forward_revs:
+			g_history_back_revs.append(g_cur_rev)
+			upcoming_rev = g_history_forward_revs.pop(0)
+	else:
+		if g_history_back_revs:
+			g_history_forward_revs.insert(0, g_cur_rev)
+			upcoming_rev = g_history_back_revs.pop(-1)
+	return get_response_by_upcoming_rev(upcoming_rev, orig_target_linenum)
+
+def get_response_by_upcoming_rev(upcoming_rev_, orig_target_linenum_):
+	global g_cur_rev
+	if upcoming_rev_ in (None, g_cur_rev):
 		return 'do-nothing'
 	else:
-		highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev)
-		upcoming_linenum = get_new_linenum(orig_target_linenum, g_cur_rev, upcoming_rev)
-		upcoming_rev_filename = get_rev_filename(upcoming_rev)
+		highlighted_log_linenum = highlight_rev_in_log_file(upcoming_rev_)
+		upcoming_linenum = get_new_linenum(orig_target_linenum_, g_cur_rev, upcoming_rev_)
+		upcoming_rev_filename = get_rev_filename(upcoming_rev_)
 		assert os.path.exists(upcoming_rev_filename)
-		g_cur_rev = upcoming_rev
+		g_cur_rev = upcoming_rev_
 		return '%s|%d|%d' % (escape_filename_for_vim_arg(upcoming_rev_filename), upcoming_linenum, highlighted_log_linenum)
 
 def hg_extension_main(ui_, repo_, filename_, **opts_):
